@@ -43,24 +43,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git checkout master
 
-          # If we're already up to date with upstream, skip rebase/push
+          # Be strict about not letting file permission flips look like changes
+          git config core.filemode false
+          git config rebase.autoStash true
+
+          # Make sure we have the latest refs
+          git fetch --prune upstream master
+          git fetch --prune origin   master
+
+          # Work on master and hard-reset to origin/master (authoritative state of your fork)
+          git checkout master
+          git reset --hard origin/master
+          git clean -fdx
+
+          # If already up-to-date with upstream, bail early
           if git merge-base --is-ancestor upstream/master master; then
             echo "already_up_to_date=true" >> "$GITHUB_OUTPUT"
             echo "changes_to_push=false"   >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Perform a non-interactive rebase
+          # Rebase fork's master on top of upstream/master
           if ! git rebase upstream/master; then
             echo "::error::Rebase encountered conflicts. Resolve manually on your fork."
-            # Abort to leave repo clean for subsequent runs
             git rebase --abort || true
             exit 1
           fi
 
-          # Determine if we need to push (compare to origin/master)
+          # Decide whether we need to push (compare to origin/master)
           if [ -n "$(git log --oneline origin/master..master)" ]; then
             echo "changes_to_push=true" >> "$GITHUB_OUTPUT"
           else
@@ -70,9 +81,7 @@ jobs:
 
       - name: Push rebased master to origin
         if: steps.rebase.outputs.changes_to_push == 'true'
-        run: |
-          # Use force-with-lease to avoid clobbering concurrent updates
-          git push --force-with-lease origin master
+        run: git push --force-with-lease origin master
 
       - name: Summary
         run: |
